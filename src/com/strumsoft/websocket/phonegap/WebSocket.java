@@ -400,6 +400,7 @@ public class WebSocket implements Runnable {
 
 	@JavascriptInterface
 	public void onClose() {
+		Log.v("websocket", "Disconnected...");
 		appView.post(new Runnable() {
 	      public void run() {
 	          appView.loadUrl(buildJavaScriptData(EVENT_ON_CLOSE, BLANK_MESSAGE));
@@ -520,6 +521,7 @@ public class WebSocket implements Runnable {
 			}
 			if (key.isReadable()) {
 				try {
+					Log.d("socket", "readable key: "+key.toString());
 					_read();
 				} catch (NoSuchAlgorithmException nsa) {
 					this.onError(nsa);
@@ -713,8 +715,12 @@ public class WebSocket implements Runnable {
 		this.handshakeComplete = true;
 		boolean isConnectionReady = true;
 
+		Log.d("Websocket", "Reading Handshake");
+		if(handShakeBody != null)
+			Log.d("Websocket Handshake", String.valueOf(handShakeBody.length)+" bytes long");
+
 		/* TODO: verify that this works. Was commented before due to null pointer exception */
-		
+		/*
 		if (this.draft == WebSocket.Draft.DRAFT76) {
 			if (handShakeBody == null) {
 				isConnectionReady = true;
@@ -732,7 +738,7 @@ public class WebSocket implements Runnable {
 				}
 			}
 		}
-		
+		*/
 		/* END */
 
 		if (isConnectionReady) {
