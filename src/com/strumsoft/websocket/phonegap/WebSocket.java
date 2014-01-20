@@ -2,7 +2,7 @@
  * Copyright (c) 2010 Nathan Rajlich (https://github.com/TooTallNate)
  * Copyright (c) 2010 Animesh Kumar (https://github.com/anismiles)
  * Copyright (c) 2010 Strumsoft (https://strumsoft.com)
- * 
+ *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
  * files (the "Software"), to deal in the Software without
@@ -11,10 +11,10 @@
  * copies of the Software, and to permit persons to whom the
  * Software is furnished to do so, subject to the following
  * conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be
  * included in all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
  * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
  * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
@@ -30,7 +30,6 @@ import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.net.InetSocketAddress;
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.channels.NotYetConnectedException;
 import java.nio.channels.SelectionKey;
@@ -44,7 +43,13 @@ import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
+import android.app.Activity;
+import android.content.Context;
+import android.os.Handler;
+import android.os.Message;
 import android.util.Log;
+import android.view.inputmethod.InputMethodManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 
 /**
@@ -54,7 +59,7 @@ import android.webkit.WebView;
  * <var>onOpen</var>, <var>onClose</var>, <var>onError</var> and
  * <var>onMessage</var>. An instance can send messages to the server via the
  * <var>send</var> method.
- * 
+ *
  * @author Animesh Kumar
  */
 public class WebSocket implements Runnable {
@@ -207,13 +212,21 @@ public class WebSocket implements Runnable {
 	 */
 	private int readyState = WEBSOCKET_STATE_CONNECTING;
 
+	private boolean keyboardIsShowing = false;
+
+	private Handler handler = null;
+
 	private final WebSocket instance;
+
+	private ByteBuffer bigBuffer = ByteBuffer.allocate(1024 * 500);
+	private byte[] tokenByteBuffer = new byte[1024 * 500];
+	private int tokenByteBufferCounter = 0;
 
 	/**
 	 * Constructor.
-	 * 
+	 *
 	 * Note: this is protected because it's supposed to be instantiated from {@link WebSocketFactory} only.
-	 * 
+	 *
 	 * @param appView
 	 *            {@link android.webkit.WebView}
 	 * @param uri
@@ -223,10 +236,11 @@ public class WebSocket implements Runnable {
 	 * @param id
 	 *            unique id for this instance
 	 */
-	protected WebSocket(WebView appView, URI uri, Draft draft, String id) {
+	protected WebSocket(Handler handler, WebView appView, URI uri, Draft draft, String id) {
 		this.appView = appView;
 		this.uri = uri;
 		this.draft = draft;
+		this.handler = handler;
 
 		// port
 		port = uri.getPort();
@@ -244,31 +258,17 @@ public class WebSocket implements Runnable {
 
 		this.instance = this;
 	}
-	
-	public WebSocket(WebView appView, URI uri){
-		this.appView = appView;
-		this.instance=new WebSocket(appView, uri, WebSocket.Draft.DRAFT75, getRandonUniqueId());
-	}
-	
-	public WebSocket(WebView appView){
-		this.appView = appView;
-		this.instance=new WebSocket(appView, null, WebSocket.Draft.DRAFT75, getRandonUniqueId());
-	}
 
-	public WebSocket(WebView appView, String url) throws URISyntaxException{
-		this.appView = appView;
-		this.instance=new WebSocket(appView, new URI(url), WebSocket.Draft.DRAFT75, getRandonUniqueId());
-
-	}
 	// //////////////////////////////////////////////////////////////////////////////////////
 	// /////////////////////////// WEB SOCKET API Methods
 	// ///////////////////////////////////
 	// //////////////////////////////////////////////////////////////////////////////////////
 	/**
 	 * Starts a new Thread and connects to server
-	 * 
+	 *
 	 * @throws IOException
 	 */
+	@JavascriptInterface
 	public Thread connect() throws IOException {
 		this.running = true;
 		this.readyState = WEBSOCKET_STATE_CONNECTING;
@@ -295,19 +295,28 @@ public class WebSocket implements Runnable {
 		return th;
 	}
 
+	@JavascriptInterface
 	public void run() {
 		while (this.running) {
 			try {
 				_connect();
 			} catch (IOException e) {
+				e.printStackTrace();
 				this.onError(e);
 			}
 		}
 	}
 
+
+	@JavascriptInterface
+	public void setKeyboardStatus(boolean status){
+		keyboardIsShowing = status;
+		Log.d("websocket", "keyboardIsShowing: "+keyboardIsShowing);
+	}
 	/**
 	 * Closes connection with server
 	 */
+	@JavascriptInterface
 	public void close() {
 		this.readyState = WebSocket.WEBSOCKET_STATE_CLOSING;
 
@@ -328,10 +337,11 @@ public class WebSocket implements Runnable {
 
 	/**
 	 * Sends <var>text</var> to server
-	 * 
+	 *
 	 * @param text
 	 *            String to send to server
 	 */
+	@JavascriptInterface
 	public void send(final String text) {
 		new Thread(new Runnable() {
 			@Override
@@ -339,7 +349,7 @@ public class WebSocket implements Runnable {
 				if (instance.readyState == WEBSOCKET_STATE_OPEN) {
 					try {
 						instance._send(text);
-					} catch (IOException e) {
+					} catch (Exception e) {
 						instance.onError(e);
 					}
 				} else {
@@ -351,46 +361,71 @@ public class WebSocket implements Runnable {
 
 	/**
 	 * Called when an entire text frame has been received.
-	 * 
+	 *
 	 * @param msg
 	 *            Message from websocket server
 	 */
-	public void onMessage(final String msg) {
+	@JavascriptInterface
+	public void onMessage(String msg) {
+		final String data = msg;
+		Log.v("websocket", "Received a message: " + msg);
 		appView.post(new Runnable() {
-			@Override
-			public void run() {
-				appView.loadUrl(buildJavaScriptData(EVENT_ON_MESSAGE, msg));
-			}
-		});
+	        public void run() {
+	    		Log.v("websocket", "sending up a message: " + data);
+//	            if(keyboardIsShowing){
+//	            	Message message = new Message();
+//	            	message.obj = buildJavaScriptData(EVENT_ON_MESSAGE, data);
+//	            	message.what = 3;
+//	            	// TODO uncomment if implemented
+////	            	handler.sendMessage(message);
+//	            } else {
+	            	appView.loadUrl(buildJavaScriptData(EVENT_ON_MESSAGE, data));
+//	            }
+	        }
+	    });
 	}
 
+	@JavascriptInterface
 	public void onOpen() {
+		Log.v("websocket", "Connected!");
 		appView.post(new Runnable() {
-			@Override
-			public void run() {
-				appView.loadUrl(buildJavaScriptData(EVENT_ON_OPEN, BLANK_MESSAGE));
-			}
-		});
+	        public void run() {
+	            appView.loadUrl(buildJavaScriptData(EVENT_ON_OPEN, BLANK_MESSAGE));
+	            if(keyboardIsShowing){
+//	            	handler.sendEmptyMessage(3);
+	            }
+	        }
+	    });
 	}
 
+	@JavascriptInterface
 	public void onClose() {
 		appView.post(new Runnable() {
-			@Override
-			public void run() {
-				appView.loadUrl(buildJavaScriptData(EVENT_ON_CLOSE, BLANK_MESSAGE));
-			}
-		});
+	      public void run() {
+	          appView.loadUrl(buildJavaScriptData(EVENT_ON_CLOSE, BLANK_MESSAGE));
+	          if(keyboardIsShowing){
+//	          	handler.sendEmptyMessage(3);
+	          }
+	      }
+    });
 	}
 
-	public void onError(final Throwable t) {
+	@JavascriptInterface
+	public void onError(Throwable t) {
+		final String msg = t.getMessage();
+		Log.v("websocket", "Error: " + msg);
+		t.printStackTrace();
 		appView.post(new Runnable() {
-			@Override
-			public void run() {
-				appView.loadUrl(buildJavaScriptData(EVENT_ON_ERROR, t.getMessage()));
-			}
-		});
+	        public void run() {
+	            appView.loadUrl(buildJavaScriptData(EVENT_ON_ERROR, msg));
+	            if(keyboardIsShowing){
+//	            	handler.sendEmptyMessage(3);
+	            }
+	        }
+	    });
 	}
 
+	@JavascriptInterface
 	public String getId() {
 		return id;
 	}
@@ -398,6 +433,7 @@ public class WebSocket implements Runnable {
 	/**
 	 * @return the readyState
 	 */
+	@JavascriptInterface
 	public int getReadyState() {
 		return readyState;
 	}
@@ -405,7 +441,7 @@ public class WebSocket implements Runnable {
 	/**
 	 * Builds text for javascript engine to invoke proper event method with
 	 * proper data.
-	 * 
+	 *
 	 * @param event
 	 *            websocket event (onOpen, onMessage etc.)
 	 * @param msg
@@ -413,8 +449,16 @@ public class WebSocket implements Runnable {
 	 * @return
 	 */
 	private String buildJavaScriptData(String event, String msg) {
-		String _d = "javascript:WebSocket." + event + "(" + "{" + "\"_target\":\"" + id + "\"," + "\"data\":'" + msg.replaceAll("'", "\\\\'")
-				+ "'" + "}" + ")";
+		String b64EncodedMsg = "Error!";
+		try{
+			if(msg != null) {
+				b64EncodedMsg = Base64.encodeBytes(msg.getBytes(UTF8_CHARSET));
+			}
+		} catch(Exception e) {
+			e.printStackTrace();
+		}
+		String _d = "javascript:WebSocket." + event + "(" + "{" + "\"_target\":\"" + id + "\","
+				+ "\"_data\":'" + b64EncodedMsg + "'" + "}" + ")";
 		return _d;
 	}
 
@@ -546,52 +590,77 @@ public class WebSocket implements Runnable {
 	}
 
 	private void _read() throws IOException, NoSuchAlgorithmException {
-		this.buffer.rewind();
-
 		int bytesRead = -1;
 		try {
-			bytesRead = this.socketChannel.read(this.buffer);
+			if (!handshakeComplete) {
+				buffer.rewind();
+				bytesRead = socketChannel.read(this.buffer);
+				buffer.rewind();
+			} else {
+				bigBuffer.rewind();
+				bytesRead = socketChannel.read(this.bigBuffer);
+				bigBuffer.rewind();
+			}
+
 		} catch (Exception ex) {
+			Log.v("websocket", "Could not read data from socket channel, ex=" + ex.toString());
 		}
 
 		if (bytesRead == -1) {
+			Log.v("websocket", "All Bytes readed");
 			close();
 		} else if (bytesRead > 0) {
-			this.buffer.rewind();
-
 			if (!this.handshakeComplete) {
 				_readHandshake();
 			} else {
-				_readFrame();
+				_readFrame(bytesRead);
 			}
 		}
 	}
 
-	private void _readFrame() throws UnsupportedEncodingException {
-		byte newestByte = this.buffer.get();
+	private void _readFrame(int bytesRead) throws UnsupportedEncodingException {
+		byte[] data = bigBuffer.array();
 
-		if (newestByte == DATA_START_OF_FRAME) { // Beginning of Frame
-			this.currentFrame = null;
+		int length = bytesRead;
+		if (length > 2000) length = 2000;
 
-		} else if (newestByte == DATA_END_OF_FRAME) { // End of Frame
-			String textFrame = null;
-			// currentFrame will be null if END_OF_FRAME was send directly after
-			// START_OF_FRAME, thus we will send 'null' as the sent message.
-			if (this.currentFrame != null) {
-				textFrame = new String(this.currentFrame.array(), UTF8_CHARSET.toString());
+		Log.v("websocket", "_readFrame - bytesRead: " + bytesRead + ", data: " + new String(data, 0, length));
+
+		// Get tokens
+		for (int i=0; i < bytesRead; i++) {
+
+			byte readByte = data[i];
+
+			// Token message is finished
+			if (readByte == DATA_END_OF_FRAME) {
+
+				// Make token public
+				this.onMessage(new String(tokenByteBuffer, 0, tokenByteBufferCounter));
+
+				// Reset counter for byte buffer
+				tokenByteBufferCounter = 0;
+
+			// Bytes to read as token message, skip start frame byte
+			} else if (readByte != DATA_START_OF_FRAME) {
+				tokenByteBufferCounter++;
+
+				// Array is out of bounds, make it greater
+				if (tokenByteBufferCounter == tokenByteBuffer.length) {
+
+					byte[] newTokenByteBuffer = new byte[tokenByteBuffer.length*2];
+
+					Log.v("websocket", "expand token byte buffer, new size=" + newTokenByteBuffer.length);
+
+					// Copy old data
+					for (int i2=0; i2<tokenByteBuffer.length; i2++) {
+						newTokenByteBuffer[i2] = tokenByteBuffer[i2];
+					}
+
+					tokenByteBuffer = newTokenByteBuffer;
+				}
+
+				tokenByteBuffer[tokenByteBufferCounter-1] = readByte;
 			}
-			// fire onMessage method
-			this.onMessage(textFrame);
-
-		} else { // Regular frame data, add to current frame buffer
-			ByteBuffer frame = ByteBuffer.allocate((this.currentFrame != null ? this.currentFrame.capacity() : 0)
-					+ this.buffer.capacity());
-			if (this.currentFrame != null) {
-				this.currentFrame.rewind();
-				frame.put(this.currentFrame);
-			}
-			frame.put(newestByte);
-			this.currentFrame = frame;
 		}
 	}
 
@@ -644,6 +713,8 @@ public class WebSocket implements Runnable {
 		this.handshakeComplete = true;
 		boolean isConnectionReady = true;
 
+		/* TODO: verify that this works. Was commented before due to null pointer exception */
+		
 		if (this.draft == WebSocket.Draft.DRAFT76) {
 			if (handShakeBody == null) {
 				isConnectionReady = true;
@@ -661,6 +732,8 @@ public class WebSocket implements Runnable {
 				}
 			}
 		}
+		
+		/* END */
 
 		if (isConnectionReady) {
 			this.readyState = WEBSOCKET_STATE_OPEN;
@@ -697,14 +770,15 @@ public class WebSocket implements Runnable {
 			key = new StringBuilder(key).insert(position, randChar).toString();
 		}
 		for (int i = 0; i < spaces; i++) {
-			int position = r.nextInt(key.length() - 1) + 1;
-			position = Math.abs(position);
+			int n = key.length() - 1;
+			int position;
+			if(n == 0) {
+				position = 1;
+			} else {
+				position = r.nextInt(n) + 1;
+			}
 			key = new StringBuilder(key).insert(position, "\u0020").toString();
 		}
 		return key;
-	}
-	
-	private String getRandonUniqueId() {
-		return "WEBSOCKET." + new Random().nextInt(100);
 	}
 }
